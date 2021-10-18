@@ -27,6 +27,7 @@ func main() {
 	keyLogFile := flag.String("keylog", "", "key log file")
 	insecure := flag.Bool("insecure", false, "skip certificate verification")
 	enableQlog := flag.Bool("qlog", false, "output a qlog (in the same directory)")
+	saveOutput := flag.String("o", "", "save data in file")
 	flag.Parse()
 	urls := flag.Args()
 
@@ -47,6 +48,16 @@ func main() {
 		}
 		defer f.Close()
 		keyLog = f
+	}
+
+	var dataFile io.Writer
+	if len(*saveOutput) > 0 {
+		f2, err := os.Create(*saveOutput)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f2.Close()
+		dataFile = f2
 	}
 
 	pool, err := x509.SystemCertPool()
@@ -101,6 +112,12 @@ func main() {
 			} else {
 				logger.Infof("Response Body:")
 				logger.Infof("%s", body.Bytes())
+			}
+			if len(*saveOutput) > 0 {
+				_, err = dataFile.Write(body.Bytes())
+				if err != nil {
+					log.Fatal(err)
+				}
 			}
 			wg.Done()
 		}(addr)
