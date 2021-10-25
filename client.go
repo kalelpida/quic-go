@@ -40,6 +40,8 @@ type client struct {
 	tracer    logging.ConnectionTracer
 	tracingID uint64
 	logger    utils.Logger
+	startAlgo utils.StartAlgo
+	congestionAlgo utils.CongestionAlgo
 }
 
 var (
@@ -56,8 +58,10 @@ func DialAddr(
 	addr string,
 	tlsConf *tls.Config,
 	config *Config,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (Session, error) {
-	return DialAddrContext(context.Background(), addr, tlsConf, config)
+	return DialAddrContext(context.Background(), addr, tlsConf, config, startAlgo, congestionAlgo)
 }
 
 // DialAddrEarly establishes a new 0-RTT QUIC connection to a server.
@@ -68,8 +72,10 @@ func DialAddrEarly(
 	addr string,
 	tlsConf *tls.Config,
 	config *Config,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (EarlySession, error) {
-	return DialAddrEarlyContext(context.Background(), addr, tlsConf, config)
+	return DialAddrEarlyContext(context.Background(), addr, tlsConf, config, startAlgo, congestionAlgo)
 }
 
 // DialAddrEarlyContext establishes a new 0-RTT QUIC connection to a server using provided context.
@@ -79,8 +85,10 @@ func DialAddrEarlyContext(
 	addr string,
 	tlsConf *tls.Config,
 	config *Config,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (EarlySession, error) {
-	sess, err := dialAddrContext(ctx, addr, tlsConf, config, true)
+	sess, err := dialAddrContext(ctx, addr, tlsConf, config, true, startAlgo, congestionAlgo)
 	if err != nil {
 		return nil, err
 	}
@@ -95,8 +103,10 @@ func DialAddrContext(
 	addr string,
 	tlsConf *tls.Config,
 	config *Config,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (Session, error) {
-	return dialAddrContext(ctx, addr, tlsConf, config, false)
+	return dialAddrContext(ctx, addr, tlsConf, config, false, startAlgo, congestionAlgo)
 }
 
 func dialAddrContext(
@@ -105,6 +115,8 @@ func dialAddrContext(
 	tlsConf *tls.Config,
 	config *Config,
 	use0RTT bool,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (quicSession, error) {
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
@@ -114,7 +126,7 @@ func dialAddrContext(
 	if err != nil {
 		return nil, err
 	}
-	return dialContext(ctx, udpConn, udpAddr, addr, tlsConf, config, use0RTT, true)
+	return dialContext(ctx, udpConn, udpAddr, addr, tlsConf, config, use0RTT, true, startAlgo, congestionAlgo)
 }
 
 // Dial establishes a new QUIC connection to a server using a net.PacketConn. If
@@ -131,8 +143,10 @@ func Dial(
 	host string,
 	tlsConf *tls.Config,
 	config *Config,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (Session, error) {
-	return dialContext(context.Background(), pconn, remoteAddr, host, tlsConf, config, false, false)
+	return dialContext(context.Background(), pconn, remoteAddr, host, tlsConf, config, false, false, startAlgo, congestionAlgo)
 }
 
 // DialEarly establishes a new 0-RTT QUIC connection to a server using a net.PacketConn.
@@ -146,8 +160,10 @@ func DialEarly(
 	host string,
 	tlsConf *tls.Config,
 	config *Config,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (EarlySession, error) {
-	return DialEarlyContext(context.Background(), pconn, remoteAddr, host, tlsConf, config)
+	return DialEarlyContext(context.Background(), pconn, remoteAddr, host, tlsConf, config, startAlgo, congestionAlgo)
 }
 
 // DialEarlyContext establishes a new 0-RTT QUIC connection to a server using a net.PacketConn using the provided context.
@@ -159,8 +175,10 @@ func DialEarlyContext(
 	host string,
 	tlsConf *tls.Config,
 	config *Config,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (EarlySession, error) {
-	return dialContext(ctx, pconn, remoteAddr, host, tlsConf, config, true, false)
+	return dialContext(ctx, pconn, remoteAddr, host, tlsConf, config, true, false, startAlgo, congestionAlgo)
 }
 
 // DialContext establishes a new QUIC connection to a server using a net.PacketConn using the provided context.
@@ -172,8 +190,10 @@ func DialContext(
 	host string,
 	tlsConf *tls.Config,
 	config *Config,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (Session, error) {
-	return dialContext(ctx, pconn, remoteAddr, host, tlsConf, config, false, false)
+	return dialContext(ctx, pconn, remoteAddr, host, tlsConf, config, false, false, startAlgo, congestionAlgo)
 }
 
 func dialContext(
@@ -185,6 +205,8 @@ func dialContext(
 	config *Config,
 	use0RTT bool,
 	createdPacketConn bool,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (quicSession, error) {
 	if tlsConf == nil {
 		return nil, errors.New("quic: tls.Config not set")
@@ -197,7 +219,7 @@ func dialContext(
 	if err != nil {
 		return nil, err
 	}
-	c, err := newClient(pconn, remoteAddr, config, tlsConf, host, use0RTT, createdPacketConn)
+	c, err := newClient(pconn, remoteAddr, config, tlsConf, host, use0RTT, createdPacketConn, startAlgo, congestionAlgo)
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +250,8 @@ func newClient(
 	host string,
 	use0RTT bool,
 	createdPacketConn bool,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (*client, error) {
 	if tlsConf == nil {
 		tlsConf = &tls.Config{}
@@ -273,6 +297,8 @@ func newClient(
 		version:           config.Versions[0],
 		handshakeChan:     make(chan struct{}),
 		logger:            utils.DefaultLogger.WithPrefix("client"),
+		startAlgo:		   startAlgo,
+		congestionAlgo:	   congestionAlgo,
 	}
 	return c, nil
 }
@@ -293,6 +319,8 @@ func (c *client) dial(ctx context.Context) error {
 		c.tracer,
 		c.tracingID,
 		c.logger,
+		c.startAlgo,
+		c.congestionAlgo,
 		c.version,
 	)
 	c.packetHandlers.Add(c.srcConnID, c.session)

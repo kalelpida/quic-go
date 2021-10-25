@@ -90,6 +90,8 @@ type baseServer struct {
 		uint64,
 		utils.Logger,
 		protocol.VersionNumber,
+		utils.StartAlgo,
+		utils.CongestionAlgo,
 	) quicSession
 
 	serverError error
@@ -101,6 +103,8 @@ type baseServer struct {
 	sessionQueueLen int32 // to be used as an atomic
 
 	logger utils.Logger
+	startAlgo		utils.StartAlgo
+	congestionAlgo	utils.CongestionAlgo
 }
 
 var (
@@ -119,20 +123,20 @@ func (s *earlyServer) Accept(ctx context.Context) (EarlySession, error) {
 // ListenAddr creates a QUIC server listening on a given address.
 // The tls.Config must not be nil and must contain a certificate configuration.
 // The quic.Config may be nil, in that case the default values will be used.
-func ListenAddr(addr string, tlsConf *tls.Config, config *Config) (Listener, error) {
-	return listenAddr(addr, tlsConf, config, false)
+func ListenAddr(addr string, tlsConf *tls.Config, config *Config, startAlgo utils.StartAlgo, congestionAlgo utils.CongestionAlgo) (Listener, error) {
+	return listenAddr(addr, tlsConf, config, false, startAlgo, congestionAlgo )
 }
 
 // ListenAddrEarly works like ListenAddr, but it returns sessions before the handshake completes.
-func ListenAddrEarly(addr string, tlsConf *tls.Config, config *Config) (EarlyListener, error) {
-	s, err := listenAddr(addr, tlsConf, config, true)
+func ListenAddrEarly(addr string, tlsConf *tls.Config, config *Config, startAlgo utils.StartAlgo, congestionAlgo utils.CongestionAlgo) (EarlyListener, error) {
+	s, err := listenAddr(addr, tlsConf, config, true, startAlgo, congestionAlgo)
 	if err != nil {
 		return nil, err
 	}
 	return &earlyServer{s}, nil
 }
 
-func listenAddr(addr string, tlsConf *tls.Config, config *Config, acceptEarly bool) (*baseServer, error) {
+func listenAddr(addr string, tlsConf *tls.Config, config *Config, acceptEarly bool, startAlgo utils.StartAlgo, congestionAlgo utils.CongestionAlgo) (*baseServer, error) {
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, err
@@ -141,7 +145,7 @@ func listenAddr(addr string, tlsConf *tls.Config, config *Config, acceptEarly bo
 	if err != nil {
 		return nil, err
 	}
-	serv, err := listen(conn, tlsConf, config, acceptEarly)
+	serv, err := listen(conn, tlsConf, config, acceptEarly, startAlgo, congestionAlgo)
 	if err != nil {
 		return nil, err
 	}
@@ -161,19 +165,19 @@ func listenAddr(addr string, tlsConf *tls.Config, config *Config, acceptEarly bo
 // it must define an application control (using NextProtos). The quic.Config may
 // be nil, in that case the default values will be used.
 func Listen(conn net.PacketConn, tlsConf *tls.Config, config *Config) (Listener, error) {
-	return listen(conn, tlsConf, config, false)
+	return listen(conn, tlsConf, config, false, utils.ChooseHystart, utils.ChooseCubic)
 }
 
 // ListenEarly works like Listen, but it returns sessions before the handshake completes.
-func ListenEarly(conn net.PacketConn, tlsConf *tls.Config, config *Config) (EarlyListener, error) {
-	s, err := listen(conn, tlsConf, config, true)
+func ListenEarly(conn net.PacketConn, tlsConf *tls.Config, config *Config, startAlgo utils.StartAlgo, congestionAlgo utils.CongestionAlgo) (EarlyListener, error) {
+	s, err := listen(conn, tlsConf, config, true, startAlgo, congestionAlgo)
 	if err != nil {
 		return nil, err
 	}
 	return &earlyServer{s}, nil
 }
 
-func listen(conn net.PacketConn, tlsConf *tls.Config, config *Config, acceptEarly bool) (*baseServer, error) {
+func listen(conn net.PacketConn, tlsConf *tls.Config, config *Config, acceptEarly bool, startAlgo utils.StartAlgo, congestionAlgo utils.CongestionAlgo) (*baseServer, error) {
 	if tlsConf == nil {
 		return nil, errors.New("quic: tls.Config not set")
 	}
@@ -211,6 +215,8 @@ func listen(conn net.PacketConn, tlsConf *tls.Config, config *Config, acceptEarl
 		receivedPackets:     make(chan *receivedPacket, protocol.MaxServerUnprocessedPackets),
 		newSession:          newSession,
 		logger:              utils.DefaultLogger.WithPrefix("server"),
+		startAlgo: 			 startAlgo,
+		congestionAlgo:		 congestionAlgo,
 		acceptEarlySessions: acceptEarly,
 	}
 	go s.run()
@@ -485,6 +491,8 @@ func (s *baseServer) handleInitialImpl(p *receivedPacket, hdr *wire.Header) erro
 			tracingID,
 			s.logger,
 			hdr.Version,
+			s.startAlgo,
+			s.congestionAlgo,
 		)
 		sess.handlePacket(p)
 		return sess

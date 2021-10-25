@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	quic "github.com/lucas-clemente/quic-go"
+	"github.com/lucas-clemente/quic-go/internal/utils"
 
 	"golang.org/x/net/http/httpguts"
 )
@@ -49,7 +50,7 @@ type RoundTripper struct {
 	// Dial specifies an optional dial function for creating QUIC
 	// connections for requests.
 	// If Dial is nil, quic.DialAddrEarly will be used.
-	Dial func(network, addr string, tlsCfg *tls.Config, cfg *quic.Config) (quic.EarlySession, error)
+	Dial func(network, addr string, tlsCfg *tls.Config, cfg *quic.Config, startAlgo utils.StartAlgo, congestionAlgo utils.CongestionAlgo) (quic.EarlySession, error)
 
 	// MaxResponseHeaderBytes specifies a limit on how many response bytes are
 	// allowed in the server's response header.
@@ -57,6 +58,10 @@ type RoundTripper struct {
 	MaxResponseHeaderBytes int64
 
 	clients map[string]roundTripCloser
+	
+	// congestion algorithms, 'E' allows to Export attribute  
+	EstartAlgo utils.StartAlgo
+	EcongestionAlgo utils.CongestionAlgo
 }
 
 // RoundTripOpt are options for the Transport.RoundTripOpt method.
@@ -147,6 +152,8 @@ func (r *RoundTripper) getClient(hostname string, onlyCached bool) (http.RoundTr
 			},
 			r.QuicConfig,
 			r.Dial,
+			r.EstartAlgo,
+			r.EcongestionAlgo,
 		)
 		if err != nil {
 			return nil, err

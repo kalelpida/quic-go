@@ -49,7 +49,7 @@ type client struct {
 	opts    *roundTripperOpts
 
 	dialOnce     sync.Once
-	dialer       func(network, addr string, tlsCfg *tls.Config, cfg *quic.Config) (quic.EarlySession, error)
+	dialer       func(network, addr string, tlsCfg *tls.Config, cfg *quic.Config, startAlgo utils.StartAlgo, congestionAlgo utils.CongestionAlgo) (quic.EarlySession, error)
 	handshakeErr error
 
 	requestWriter *requestWriter
@@ -60,6 +60,8 @@ type client struct {
 	session  quic.EarlySession
 
 	logger utils.Logger
+	startAlgo utils.StartAlgo
+	congestionAlgo utils.CongestionAlgo
 }
 
 func newClient(
@@ -67,7 +69,9 @@ func newClient(
 	tlsConf *tls.Config,
 	opts *roundTripperOpts,
 	quicConfig *quic.Config,
-	dialer func(network, addr string, tlsCfg *tls.Config, cfg *quic.Config) (quic.EarlySession, error),
+	dialer func(network, addr string, tlsCfg *tls.Config, cfg *quic.Config, startAlgo utils.StartAlgo, congestionAlgo utils.CongestionAlgo) (quic.EarlySession, error),
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) (*client, error) {
 	if quicConfig == nil {
 		quicConfig = defaultQuicConfig.Clone()
@@ -99,15 +103,17 @@ func newClient(
 		opts:          opts,
 		dialer:        dialer,
 		logger:        logger,
+		startAlgo:	   startAlgo,
+		congestionAlgo: congestionAlgo,
 	}, nil
 }
 
 func (c *client) dial() error {
 	var err error
 	if c.dialer != nil {
-		c.session, err = c.dialer("udp", c.hostname, c.tlsConf, c.config)
+		c.session, err = c.dialer("udp", c.hostname, c.tlsConf, c.config, c.startAlgo, c.congestionAlgo)
 	} else {
-		c.session, err = dialAddr(c.hostname, c.tlsConf, c.config)
+		c.session, err = dialAddr(c.hostname, c.tlsConf, c.config, c.startAlgo, c.congestionAlgo)
 	}
 	if err != nil {
 		return err

@@ -145,6 +145,8 @@ func main() {
 	www := flag.String("www", "", "www data")
 	tcp := flag.Bool("tcp", false, "also listen on TCP")
 	enableQlog := flag.Bool("qlog", false, "output a qlog (in the same directory)")
+	startAlgostr := flag.String("start", "", "choose start algo amongst defined start algos in utils.algorithms")
+	congestionAlgostr := flag.String("congestion", "", "choose congestion algo amongst defined start algos in utils.algorithms")
 	flag.Parse()
 
 	logger := utils.DefaultLogger
@@ -174,6 +176,9 @@ func main() {
 		})
 	}
 
+	startAlgo := utils.String2Start(*startAlgostr)
+	congestionAlgo := utils.String2Congestion(*congestionAlgostr)
+
 	var wg sync.WaitGroup
 	wg.Add(len(bs))
 	for _, b := range bs {
@@ -187,6 +192,8 @@ func main() {
 				server := http3.Server{
 					Server:     &http.Server{Handler: handler, Addr: bCap},
 					QuicConfig: quicConf,
+					EstartAlgo: startAlgo,
+					EcongestionAlgo: congestionAlgo,
 				}
 				err = server.ListenAndServeTLS(testdata.GetCertificatePaths())
 			}

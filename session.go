@@ -223,6 +223,9 @@ type session struct {
 	logID  string
 	tracer logging.ConnectionTracer
 	logger utils.Logger
+
+	startAlgo utils.StartAlgo
+	congestionAlgo utils.CongestionAlgo
 }
 
 var (
@@ -249,6 +252,8 @@ var newSession = func(
 	tracingID uint64,
 	logger utils.Logger,
 	v protocol.VersionNumber,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 ) quicSession {
 	s := &session{
 		conn:                  conn,
@@ -262,6 +267,8 @@ var newSession = func(
 		tracer:                tracer,
 		logger:                logger,
 		version:               v,
+		startAlgo:			   startAlgo,
+		congestionAlgo:		   congestionAlgo,
 	}
 	if origDestConnID != nil {
 		s.logID = origDestConnID.String()
@@ -294,6 +301,8 @@ var newSession = func(
 		s.perspective,
 		s.tracer,
 		s.logger,
+		s.startAlgo,
+		s.congestionAlgo,
 		s.version,
 	)
 	initialStream := newCryptoStream()
@@ -379,6 +388,8 @@ var newClientSession = func(
 	tracer logging.ConnectionTracer,
 	tracingID uint64,
 	logger utils.Logger,
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 	v protocol.VersionNumber,
 ) quicSession {
 	s := &session{
@@ -394,6 +405,8 @@ var newClientSession = func(
 		tracer:                tracer,
 		versionNegotiated:     hasNegotiatedVersion,
 		version:               v,
+		startAlgo: 			   startAlgo,
+		congestionAlgo:		   congestionAlgo,
 	}
 	s.connIDManager = newConnIDManager(
 		destConnID,
@@ -421,6 +434,8 @@ var newClientSession = func(
 		s.perspective,
 		s.tracer,
 		s.logger,
+		s.startAlgo,
+		s.congestionAlgo,
 		s.version,
 	)
 	initialStream := newCryptoStream()

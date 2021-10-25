@@ -104,6 +104,10 @@ type Server struct {
 
 	loggerOnce sync.Once
 	logger     utils.Logger
+
+	//Export algorithms to reach them when creating the server. By default Hystart and NewReno
+	EstartAlgo utils.StartAlgo
+	EcongestionAlgo utils.CongestionAlgo
 }
 
 // ListenAndServe listens on the UDP address s.Addr and calls s.Handler to handle HTTP/3 requests on incoming connections.
@@ -192,9 +196,9 @@ func (s *Server) serveImpl(tlsConf *tls.Config, conn net.PacketConn) error {
 		quicConf.EnableDatagrams = true
 	}
 	if conn == nil {
-		ln, err = quicListenAddr(s.Addr, baseConf, quicConf)
+		ln, err = quicListenAddr(s.Addr, baseConf, quicConf, s.EstartAlgo, s.EcongestionAlgo)
 	} else {
-		ln, err = quicListen(conn, baseConf, quicConf)
+		ln, err = quicListen(conn, baseConf, quicConf, s.EstartAlgo, s.EcongestionAlgo)
 	}
 	if err != nil {
 		return err

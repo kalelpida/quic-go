@@ -54,7 +54,7 @@ func clientMain() error {
 		InsecureSkipVerify: true,
 		NextProtos:         []string{"quic-echo-example"},
 	}
-	session, err := quic.DialAddr(addr, tlsConf, nil)
+	session, err := quic.DialAddr(addr, tlsConf, nil, utils.ChooseHystart, utils.ChooseNewReno)
 	if err != nil {
 		return err
 	}

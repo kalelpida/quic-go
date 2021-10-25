@@ -28,6 +28,8 @@ func main() {
 	insecure := flag.Bool("insecure", false, "skip certificate verification")
 	enableQlog := flag.Bool("qlog", false, "output a qlog (in the same directory)")
 	saveOutput := flag.String("o", "", "save data in file")
+	startAlgostr := flag.String("start", "", "choose start algo amongst defined start algos in utils.algorithms")
+	congestionAlgostr := flag.String("congestion", "", "choose congestion algo amongst defined start algos in utils.algorithms")
 	flag.Parse()
 	urls := flag.Args()
 
@@ -60,6 +62,9 @@ func main() {
 		dataFile = f2
 	}
 
+	startAlgo := utils.String2Start(*startAlgostr)
+	congestionAlgo := utils.String2Congestion(*congestionAlgostr)
+
 	pool, err := x509.SystemCertPool()
 	if err != nil {
 		log.Fatal(err)
@@ -85,6 +90,8 @@ func main() {
 			KeyLogWriter:       keyLog,
 		},
 		QuicConfig: &qconf,
+		EstartAlgo: startAlgo,
+		EcongestionAlgo: congestionAlgo,
 	}
 	defer roundTripper.Close()
 	hclient := &http.Client{

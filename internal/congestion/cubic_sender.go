@@ -26,7 +26,8 @@ type cubicSender struct {
 	pacer           *pacer
 	clock           Clock
 
-	reno bool
+	chosenStartAlgo utils.StartAlgo
+	chosenCongestionAlgo utils.CongestionAlgo
 
 	// Track the largest packet that has been sent.
 	largestSentPacketNumber protocol.PacketNumber
@@ -69,13 +70,15 @@ func NewCubicSender(
 	clock Clock,
 	rttStats *utils.RTTStats,
 	initialMaxDatagramSize protocol.ByteCount,
-	reno bool,
+	chosenStartAlgo utils.StartAlgo,
+	chosenCongestionAlgo utils.CongestionAlgo,
 	tracer logging.ConnectionTracer,
 ) *cubicSender {
 	return newCubicSender(
 		clock,
 		rttStats,
-		reno,
+		chosenStartAlgo,
+		chosenCongestionAlgo,
 		initialMaxDatagramSize,
 		initialCongestionWindow*initialMaxDatagramSize,
 		protocol.MaxCongestionWindowPackets*initialMaxDatagramSize,
@@ -86,7 +89,8 @@ func NewCubicSender(
 func newCubicSender(
 	clock Clock,
 	rttStats *utils.RTTStats,
-	reno bool,
+	chosenStartAlgo utils.StartAlgo,
+	chosenCongestionAlgo utils.CongestionAlgo,
 	initialMaxDatagramSize,
 	initialCongestionWindow,
 	initialMaxCongestionWindow protocol.ByteCount,
@@ -103,7 +107,8 @@ func newCubicSender(
 		slowStartThreshold:         protocol.MaxByteCount,
 		cubic:                      NewCubic(clock),
 		clock:                      clock,
-		reno:                       reno,
+		chosenStartAlgo:			chosenStartAlgo,
+		chosenCongestionAlgo:		chosenCongestionAlgo,
 		tracer:                     tracer,
 		maxDatagramSize:            initialMaxDatagramSize,
 	}
@@ -164,11 +169,24 @@ func (c *cubicSender) GetCongestionWindow() protocol.ByteCount {
 }
 
 func (c *cubicSender) MaybeExitSlowStart() {
-	if c.InSlowStart() &&
-		c.hybridSlowStart.ShouldExitSlowStart(c.rttStats.LatestRTT(), c.rttStats.MinRTT(), c.GetCongestionWindow()/c.maxDatagramSize) {
-		// exit slow start
-		c.slowStartThreshold = c.congestionWindow
-		c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
+	if c.InSlowStart(){
+		switch c.chosenStartAlgo {
+		case utils.ChooseSlowStart:
+			// do not exit slow start
+			break
+		case utils.ChooseHystart:
+			if c.hybridSlowStart.ShouldExitSlowStart(c.rttStats.LatestRTT(), c.rttStats.MinRTT(), c.GetCongestionWindow()/c.maxDatagramSize) {
+				// exit slow start
+				c.slowStartThreshold = c.congestionWindow
+				c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
+			}
+			break
+		case utils.ChooseHystartpp:
+			// to be completed
+			break
+		} 
+		
+		
 	}
 }
 
@@ -191,25 +209,45 @@ func (c *cubicSender) OnPacketAcked(
 func (c *cubicSender) OnPacketLost(packetNumber protocol.PacketNumber, lostBytes, priorInFlight protocol.ByteCount) {
 	// TCP NewReno (RFC6582) says that once a loss occurs, any losses in packets
 	// already sent should be treated as a single loss event, since it's expected.
-	if packetNumber <= c.largestSentAtLastCutback {
-		return
-	}
-	c.lastCutbackExitedSlowstart = c.InSlowStart()
-	c.maybeTraceStateChange(logging.CongestionStateRecovery)
+	switch c.chosenCongestionAlgo {
+	case utils.ChooseNewReno:
+		if packetNumber <= c.largestSentAtLastCutback {
+			return
+		}
+		c.lastCutbackExitedSlowstart = c.InSlowStart()
+		c.maybeTraceStateChange(logging.CongestionStateRecovery)
 
-	if c.reno {
 		c.congestionWindow = protocol.ByteCount(float64(c.congestionWindow) * renoBeta)
-	} else {
+
+		if minCwnd := c.minCongestionWindow(); c.congestionWindow < minCwnd {
+			c.congestionWindow = minCwnd
+		}
+		c.slowStartThreshold = c.congestionWindow
+		c.largestSentAtLastCutback = c.largestSentPacketNumber
+		// reset packet count from congestion avoidance mode. We start
+		// counting again when we're out of recovery.
+		c.numAckedPackets = 0
+		break
+	
+	case utils.ChooseCubic:
+		if packetNumber <= c.largestSentAtLastCutback {
+			return
+		}
+		c.lastCutbackExitedSlowstart = c.InSlowStart()
+		c.maybeTraceStateChange(logging.CongestionStateRecovery)
+
 		c.congestionWindow = c.cubic.CongestionWindowAfterPacketLoss(c.congestionWindow)
+
+		if minCwnd := c.minCongestionWindow(); c.congestionWindow < minCwnd {
+			c.congestionWindow = minCwnd
+		}
+		c.slowStartThreshold = c.congestionWindow
+		c.largestSentAtLastCutback = c.largestSentPacketNumber
+		// reset packet count from congestion avoidance mode. We start
+		// counting again when we're out of recovery.
+		c.numAckedPackets = 0
+		break
 	}
-	if minCwnd := c.minCongestionWindow(); c.congestionWindow < minCwnd {
-		c.congestionWindow = minCwnd
-	}
-	c.slowStartThreshold = c.congestionWindow
-	c.largestSentAtLastCutback = c.largestSentPacketNumber
-	// reset packet count from congestion avoidance mode. We start
-	// counting again when we're out of recovery.
-	c.numAckedPackets = 0
 }
 
 // Called when we receive an ack. Normal TCP tracks how many packets one ack
@@ -220,34 +258,57 @@ func (c *cubicSender) maybeIncreaseCwnd(
 	priorInFlight protocol.ByteCount,
 	eventTime time.Time,
 ) {
-	// Do not increase the congestion window unless the sender is close to using
-	// the current window.
-	if !c.isCwndLimited(priorInFlight) {
-		c.cubic.OnApplicationLimited()
-		c.maybeTraceStateChange(logging.CongestionStateApplicationLimited)
-		return
-	}
-	if c.congestionWindow >= c.maxCongestionWindow() {
-		return
-	}
-	if c.InSlowStart() {
-		// TCP slow start, exponential growth, increase by one for each ACK.
-		c.congestionWindow += c.maxDatagramSize
-		c.maybeTraceStateChange(logging.CongestionStateSlowStart)
-		return
-	}
-	// Congestion avoidance
-	c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
-	if c.reno {
+	switch c.chosenCongestionAlgo{
+	case utils.ChooseNewReno:
+		// Do not increase the congestion window unless the sender is close to using
+		// the current window.
+		if !c.isCwndLimited(priorInFlight) {
+			c.cubic.OnApplicationLimited()
+			c.maybeTraceStateChange(logging.CongestionStateApplicationLimited)
+			return
+		}
+		if c.congestionWindow >= c.maxCongestionWindow() {
+			return
+		}
+		if c.InSlowStart() {
+			// TCP slow start, exponential growth, increase by one for each ACK.
+			c.congestionWindow += c.maxDatagramSize
+			c.maybeTraceStateChange(logging.CongestionStateSlowStart)
+			return
+		}
+		// Congestion avoidance
+		c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
+		
 		// Classic Reno congestion avoidance.
 		c.numAckedPackets++
 		if c.numAckedPackets >= uint64(c.congestionWindow/c.maxDatagramSize) {
 			c.congestionWindow += c.maxDatagramSize
 			c.numAckedPackets = 0
 		}
-	} else {
+		
+	case utils.ChooseCubic:
+		// Do not increase the congestion window unless the sender is close to using
+		// the current window.
+		if !c.isCwndLimited(priorInFlight) {
+			c.cubic.OnApplicationLimited()
+			c.maybeTraceStateChange(logging.CongestionStateApplicationLimited)
+			return
+		}
+		if c.congestionWindow >= c.maxCongestionWindow() {
+			return
+		}
+		if c.InSlowStart() {
+			// TCP slow start, exponential growth, increase by one for each ACK.
+			c.congestionWindow += c.maxDatagramSize
+			c.maybeTraceStateChange(logging.CongestionStateSlowStart)
+			return
+		}
+		// Congestion avoidance
+		c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
+		
 		c.congestionWindow = utils.MinByteCount(c.maxCongestionWindow(), c.cubic.CongestionWindowAfterAck(ackedBytes, c.congestionWindow, c.rttStats.MinRTT(), eventTime))
 	}
+	
 }
 
 func (c *cubicSender) isCwndLimited(bytesInFlight protocol.ByteCount) bool {

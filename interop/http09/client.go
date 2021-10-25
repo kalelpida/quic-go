@@ -28,6 +28,9 @@ type RoundTripper struct {
 	QuicConfig      *quic.Config
 
 	clients map[string]*client
+
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 }
 
 var _ http.RoundTripper = &RoundTripper{}
@@ -57,6 +60,8 @@ func (r *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			hostname: hostname,
 			tlsConf:  tlsConf,
 			quicConf: r.QuicConfig,
+			startAlgo: r.startAlgo,
+			congestionAlgo: r.congestionAlgo,
 		}
 		r.clients[hostname] = c
 	}
@@ -86,11 +91,14 @@ type client struct {
 	once    sync.Once
 	sess    quic.EarlySession
 	dialErr error
+
+	startAlgo utils.StartAlgo,
+	congestionAlgo utils.CongestionAlgo,
 }
 
 func (c *client) RoundTrip(req *http.Request) (*http.Response, error) {
 	c.once.Do(func() {
-		c.sess, c.dialErr = quic.DialAddrEarly(c.hostname, c.tlsConf, c.quicConf)
+		c.sess, c.dialErr = quic.DialAddrEarly(c.hostname, c.tlsConf, c.quicConf, c.startAlgo, c.congestionAlgo)
 	})
 	if c.dialErr != nil {
 		return nil, c.dialErr
