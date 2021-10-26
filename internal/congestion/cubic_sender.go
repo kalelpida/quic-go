@@ -21,6 +21,7 @@ const (
 
 type cubicSender struct {
 	hybridSlowStart HybridSlowStart
+	hybridSlowStartpp HybridSlowStartpp
 	rttStats        *utils.RTTStats
 	cubic           *Cubic
 	pacer           *pacer
@@ -182,7 +183,9 @@ func (c *cubicSender) MaybeExitSlowStart() {
 			}
 			break
 		case utils.ChooseHystartpp:
-			// to be completed
+			if (!c.hybridSlowStartpp.IsInLSS() && c.hybridSlowStartpp.ShouldExitSlowStart(c.rttStats.LatestRTT(), c.rttStats.MinRTT(), c.GetCongestionWindow(), c.maxDatagramSize)){
+				c.slowStartThreshold = c.congestionWindow
+			}
 			break
 		} 
 		
@@ -202,7 +205,13 @@ func (c *cubicSender) OnPacketAcked(
 	}
 	c.maybeIncreaseCwnd(ackedPacketNumber, ackedBytes, priorInFlight, eventTime)
 	if c.InSlowStart() {
+	switch c.chosenStartAlgo {
+	case utils.ChooseSlowStart, utils.ChooseHystart:
 		c.hybridSlowStart.OnPacketAcked(ackedPacketNumber)
+	case utils.ChooseHystartpp:
+		c.hybridSlowStartpp.OnPacketAcked(ackedPacketNumber)
+	}
+		
 	}
 }
 
@@ -258,24 +267,35 @@ func (c *cubicSender) maybeIncreaseCwnd(
 	priorInFlight protocol.ByteCount,
 	eventTime time.Time,
 ) {
-	switch c.chosenCongestionAlgo{
-	case utils.ChooseNewReno:
-		// Do not increase the congestion window unless the sender is close to using
-		// the current window.
-		if !c.isCwndLimited(priorInFlight) {
-			c.cubic.OnApplicationLimited()
-			c.maybeTraceStateChange(logging.CongestionStateApplicationLimited)
-			return
-		}
-		if c.congestionWindow >= c.maxCongestionWindow() {
-			return
-		}
-		if c.InSlowStart() {
-			// TCP slow start, exponential growth, increase by one for each ACK.
+	// Do not increase the congestion window unless the sender is close to using
+	// the current window.
+	if !c.isCwndLimited(priorInFlight) {
+		c.cubic.OnApplicationLimited()
+		c.maybeTraceStateChange(logging.CongestionStateApplicationLimited)
+		return
+	}
+	if c.congestionWindow >= c.maxCongestionWindow() {
+		return
+	}
+	if c.InSlowStart() {
+		// TCP slow start, exponential growth, increase by one for each ACK.
+		switch c.chosenStartAlgo{
+		case utils.ChooseSlowStart, utils.ChooseHystart:
 			c.congestionWindow += c.maxDatagramSize
 			c.maybeTraceStateChange(logging.CongestionStateSlowStart)
-			return
+		case utils.ChooseHystartpp:
+			//arbitrary choice of cubic congestion window. RFC recommends to compare to Congestion Avoidance algorithm actually used
+			potentialCongestionWindow := utils.MinByteCount(c.maxCongestionWindow(), c.cubic.CongestionWindowAfterAck(ackedBytes, c.congestionWindow, c.rttStats.MinRTT(), eventTime))
+			c.congestionWindow = c.hybridSlowStartpp.UpdateCwndHystartpp(ackedBytes, c.congestionWindow, c.maxDatagramSize, c.slowStartThreshold, potentialCongestionWindow)
+			if c.InSlowStart() {
+				//hystart++ should only be used once. After getting in congestion avoidance, we switch to standard Slow Start
+				c.chosenStartAlgo = utils.ChooseHystart
+			}
 		}
+		return
+	}
+	switch c.chosenCongestionAlgo{
+	case utils.ChooseNewReno:
 		// Congestion avoidance
 		c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
 		
@@ -287,25 +307,8 @@ func (c *cubicSender) maybeIncreaseCwnd(
 		}
 		
 	case utils.ChooseCubic:
-		// Do not increase the congestion window unless the sender is close to using
-		// the current window.
-		if !c.isCwndLimited(priorInFlight) {
-			c.cubic.OnApplicationLimited()
-			c.maybeTraceStateChange(logging.CongestionStateApplicationLimited)
-			return
-		}
-		if c.congestionWindow >= c.maxCongestionWindow() {
-			return
-		}
-		if c.InSlowStart() {
-			// TCP slow start, exponential growth, increase by one for each ACK.
-			c.congestionWindow += c.maxDatagramSize
-			c.maybeTraceStateChange(logging.CongestionStateSlowStart)
-			return
-		}
 		// Congestion avoidance
 		c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
-		
 		c.congestionWindow = utils.MinByteCount(c.maxCongestionWindow(), c.cubic.CongestionWindowAfterAck(ackedBytes, c.congestionWindow, c.rttStats.MinRTT(), eventTime))
 	}
 	
@@ -337,7 +340,13 @@ func (c *cubicSender) OnRetransmissionTimeout(packetsRetransmitted bool) {
 	if !packetsRetransmitted {
 		return
 	}
-	c.hybridSlowStart.Restart()
+	switch c.chosenStartAlgo{
+	case utils.ChooseHystartpp:
+		c.hybridSlowStartpp.Restart()
+	default:
+		c.hybridSlowStart.Restart()
+	}
+	
 	c.cubic.Reset()
 	c.slowStartThreshold = c.congestionWindow / 2
 	c.congestionWindow = c.minCongestionWindow()
@@ -345,7 +354,13 @@ func (c *cubicSender) OnRetransmissionTimeout(packetsRetransmitted bool) {
 
 // OnConnectionMigration is called when the connection is migrated (?)
 func (c *cubicSender) OnConnectionMigration() {
-	c.hybridSlowStart.Restart()
+	switch c.chosenStartAlgo {
+	case utils.ChooseHystart:
+		c.hybridSlowStart.Restart()
+	case utils.ChooseHystartpp:
+		c.hybridSlowStartpp.Restart()
+	}
+	
 	c.largestSentPacketNumber = protocol.InvalidPacketNumber
 	c.largestAckedPacketNumber = protocol.InvalidPacketNumber
 	c.largestSentAtLastCutback = protocol.InvalidPacketNumber
