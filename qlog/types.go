@@ -308,6 +308,8 @@ func (s congestionState) String() string {
 	switch logging.CongestionState(s) {
 	case logging.CongestionStateSlowStart:
 		return "slow_start"
+	case logging.CongestionStateLowSlowStart:
+		return "low_slow_start"
 	case logging.CongestionStateCongestionAvoidance:
 		return "congestion_avoidance"
 	case logging.CongestionStateRecovery:

@@ -165,6 +165,10 @@ func (c *cubicSender) InSlowStart() bool {
 	return c.GetCongestionWindow() < c.slowStartThreshold
 }
 
+func (c *cubicSender) InLowSlowStart() bool {
+	return c.chosenStartAlgo == utils.ChooseHystartpp && c.hybridSlowStartpp.IsInLSS()
+}
+
 func (c *cubicSender) GetCongestionWindow() protocol.ByteCount {
 	return c.congestionWindow
 }
@@ -183,13 +187,12 @@ func (c *cubicSender) MaybeExitSlowStart() {
 			}
 			break
 		case utils.ChooseHystartpp:
-			if (!c.hybridSlowStartpp.IsInLSS() && c.hybridSlowStartpp.ShouldExitSlowStart(c.rttStats.LatestRTT(), c.rttStats.MinRTT(), c.GetCongestionWindow(), c.maxDatagramSize)){
+			if (c.hybridSlowStartpp.ShouldExitSlowStart(c.rttStats.LatestRTT(), c.rttStats.MinRTT(), c.GetCongestionWindow(), c.maxDatagramSize)){
 				c.slowStartThreshold = c.congestionWindow
+				c.maybeTraceStateChange(logging.CongestionStateSlowStart)
 			}
 			break
 		} 
-		
-		
 	}
 }
 
@@ -205,19 +208,24 @@ func (c *cubicSender) OnPacketAcked(
 	}
 	c.maybeIncreaseCwnd(ackedPacketNumber, ackedBytes, priorInFlight, eventTime)
 	if c.InSlowStart() {
-	switch c.chosenStartAlgo {
-	case utils.ChooseSlowStart, utils.ChooseHystart:
-		c.hybridSlowStart.OnPacketAcked(ackedPacketNumber)
-	case utils.ChooseHystartpp:
-		c.hybridSlowStartpp.OnPacketAcked(ackedPacketNumber)
-	}
-		
+		switch c.chosenStartAlgo {
+		case utils.ChooseSlowStart, utils.ChooseHystart:
+			c.hybridSlowStart.OnPacketAcked(ackedPacketNumber)
+		case utils.ChooseHystartpp:
+			c.hybridSlowStartpp.OnPacketAcked(ackedPacketNumber)
+		}
 	}
 }
 
 func (c *cubicSender) OnPacketLost(packetNumber protocol.PacketNumber, lostBytes, priorInFlight protocol.ByteCount) {
 	// TCP NewReno (RFC6582) says that once a loss occurs, any losses in packets
 	// already sent should be treated as a single loss event, since it's expected.
+	if c.chosenStartAlgo == utils.ChooseHystartpp {
+		//hystart++ should only be used once. After getting in congestion avoidance, we switch to standard Slow Start
+		c.hybridSlowStartpp.QuitLSS()
+		c.chosenStartAlgo = utils.ChooseSlowStart
+		c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
+	}
 	switch c.chosenCongestionAlgo {
 	case utils.ChooseNewReno:
 		if packetNumber <= c.largestSentAtLastCutback {
@@ -284,34 +292,44 @@ func (c *cubicSender) maybeIncreaseCwnd(
 			c.congestionWindow += c.maxDatagramSize
 			c.maybeTraceStateChange(logging.CongestionStateSlowStart)
 		case utils.ChooseHystartpp:
-			//arbitrary choice of cubic congestion window. RFC recommends to compare to Congestion Avoidance algorithm actually used
-			potentialCongestionWindow := utils.MinByteCount(c.maxCongestionWindow(), c.cubic.CongestionWindowAfterAck(ackedBytes, c.congestionWindow, c.rttStats.MinRTT(), eventTime))
-			c.congestionWindow = c.hybridSlowStartpp.UpdateCwndHystartpp(ackedBytes, c.congestionWindow, c.maxDatagramSize, c.slowStartThreshold, potentialCongestionWindow)
-			if c.InSlowStart() {
-				//hystart++ should only be used once. After getting in congestion avoidance, we switch to standard Slow Start
-				c.chosenStartAlgo = utils.ChooseHystart
-			}
+			c.congestionWindow = c.hybridSlowStartpp.UpdateCwndHystartppSlowStart(ackedBytes, c.congestionWindow, c.maxDatagramSize)		
 		}
-		return
-	}
-	switch c.chosenCongestionAlgo{
-	case utils.ChooseNewReno:
-		// Congestion avoidance
-		c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
-		
-		// Classic Reno congestion avoidance.
-		c.numAckedPackets++
-		if c.numAckedPackets >= uint64(c.congestionWindow/c.maxDatagramSize) {
-			c.congestionWindow += c.maxDatagramSize
-			c.numAckedPackets = 0
-		}
-		
-	case utils.ChooseCubic:
-		// Congestion avoidance
-		c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
-		c.congestionWindow = utils.MinByteCount(c.maxCongestionWindow(), c.cubic.CongestionWindowAfterAck(ackedBytes, c.congestionWindow, c.rttStats.MinRTT(), eventTime))
-	}
 	
+	} else if c.InLowSlowStart() {
+		//RFC recommends to compare hystartpp Cwnd to Congestion Avoidance algorithm computed Cwnd
+		caWindow := c.congestionWindow
+		switch c.chosenCongestionAlgo{
+		case utils.ChooseNewReno:
+			if c.numAckedPackets >= uint64(c.congestionWindow/c.maxDatagramSize) {
+				caWindow = c.congestionWindow + c.maxDatagramSize
+			}
+			//else: keep caWindow = c.congestionWindow
+		case utils.ChooseCubic:
+			fallthrough
+		default:
+			//cubic window is used 
+			caWindow = utils.MinByteCount(c.maxCongestionWindow(), c.cubic.CongestionWindowAfterAck(ackedBytes, c.congestionWindow, c.rttStats.MinRTT(), eventTime))
+		}
+		c.congestionWindow = c.hybridSlowStartpp.UpdateCwndHystartppLowSlowStart(ackedBytes, c.congestionWindow, c.maxDatagramSize, c.slowStartThreshold, caWindow)		
+	
+	} else {
+		switch c.chosenCongestionAlgo{
+		case utils.ChooseNewReno:
+			// Congestion avoidance
+			c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
+			
+			// Classic Reno congestion avoidance.
+			c.numAckedPackets++
+			if c.numAckedPackets >= uint64(c.congestionWindow/c.maxDatagramSize) {
+				c.congestionWindow += c.maxDatagramSize
+				c.numAckedPackets = 0
+			}	
+		case utils.ChooseCubic:
+			// Congestion avoidance
+			c.maybeTraceStateChange(logging.CongestionStateCongestionAvoidance)
+			c.congestionWindow = utils.MinByteCount(c.maxCongestionWindow(), c.cubic.CongestionWindowAfterAck(ackedBytes, c.congestionWindow, c.rttStats.MinRTT(), eventTime))
+		}
+	}	
 }
 
 func (c *cubicSender) isCwndLimited(bytesInFlight protocol.ByteCount) bool {

@@ -53,19 +53,24 @@ func (s *HybridSlowStartpp) StartReceiveRound(lastSent protocol.PacketNumber) {
 func (s *HybridSlowStartpp) IsInLSS() bool {
 	return s.inLSS
 }
+
+func (s *HybridSlowStartpp) QuitLSS() {
+	s.inLSS = false
+}
+
 // IsEndOfRound returns true if this ack is the last packet number of our current slow start round.
 func (s *HybridSlowStartpp) IsEndOfRound(ack protocol.PacketNumber) bool {
 	return s.endPacketNumber < ack
 }
 
-func (s *HybridSlowStartpp) UpdateCwndHystartpp(ackedBytes protocol.ByteCount, cwnd protocol.ByteCount, maxDatagramSize protocol.ByteCount, ssthresh protocol.ByteCount, predictedCAcwnd protocol.ByteCount) protocol.ByteCount {
+func (s *HybridSlowStartpp) UpdateCwndHystartppSlowStart(ackedBytes protocol.ByteCount, cwnd protocol.ByteCount, maxDatagramSize protocol.ByteCount) protocol.ByteCount {
 	// maxDatagramSize : SMSS, ackedBytes:N
-	if s.inLSS {
-		K := float64(cwnd) / (hybridStartppLSS_DIVISOR * float64(ssthresh))
-		return protocol.ByteCount(math.Max(float64(cwnd) + (math.Min(float64(ackedBytes), hybridStartppL*float64(maxDatagramSize)) / K), float64(predictedCAcwnd)))
-	} else {
-		return cwnd + protocol.ByteCount(math.Min(float64(ackedBytes), hybridStartppL*float64(maxDatagramSize)))
-	}
+	return cwnd + protocol.ByteCount(math.Min(float64(ackedBytes), hybridStartppL*float64(maxDatagramSize)))
+}
+func (s *HybridSlowStartpp) UpdateCwndHystartppLowSlowStart(ackedBytes protocol.ByteCount, cwnd protocol.ByteCount, maxDatagramSize protocol.ByteCount, ssthresh protocol.ByteCount, predictedCAcwnd protocol.ByteCount) protocol.ByteCount {
+	// maxDatagramSize : SMSS, ackedBytes:N
+	K := float64(cwnd) / (hybridStartppLSS_DIVISOR * float64(ssthresh))
+	return protocol.ByteCount(math.Max(float64(cwnd) + (math.Min(float64(ackedBytes), hybridStartppL*float64(maxDatagramSize)) / K), float64(predictedCAcwnd)))
 }
 // ShouldExitSlowStart should be called on every new ack frame, since a new
 // RTT measurement can be made then.
