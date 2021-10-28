@@ -5,23 +5,13 @@ import (
 	"crypto/x509"
 	"io/ioutil"
 	"path"
-	"runtime"
 )
 
-var certPath string
-
-func init() {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("Failed to get current frame")
-	}
-
-	certPath = path.Dir(filename)
-}
+var CertPath string
 
 // GetCertificatePaths returns the paths to certificate and key
 func GetCertificatePaths() (string, string) {
-	return path.Join(certPath, "cert.pem"), path.Join(certPath, "priv.key")
+	return path.Join(CertPath, "cert.pem"), path.Join(CertPath, "priv.key")
 }
 
 // GetTLSConfig returns a tls config for quic.clemente.io
@@ -37,7 +27,7 @@ func GetTLSConfig() *tls.Config {
 
 // AddRootCA adds the root CA certificate to a cert pool
 func AddRootCA(certPool *x509.CertPool) {
-	caCertPath := path.Join(certPath, "ca.pem")
+	caCertPath := path.Join(CertPath, "ca.pem")
 	caCertRaw, err := ioutil.ReadFile(caCertPath)
 	if err != nil {
 		panic(err)
