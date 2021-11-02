@@ -78,17 +78,18 @@ func (s *HybridSlowStartpp) UpdateCwndHystartppLowSlowStart(ackedBytes protocol.
 // minRTT: is the lowest delay (RTT) we have seen during the session.
 // congestionWindow: the congestion window in packets.
 
-func (s *HybridSlowStartpp) ShouldExitSlowStart(latestRTT time.Duration, minRTT time.Duration, congestionWindow protocol.ByteCount, maxSegmentSize protocol.ByteCount) bool {
+func (s *HybridSlowStartpp) ShouldExitSlowStart(latestRTT time.Duration, minRTT time.Duration, congestionWindow protocol.ByteCount) bool {
 	if !s.started {
 		// Time to start the hybrid slow start.
 		s.StartReceiveRound(s.lastSentPacketNumber)
 	}
 	//keep track of minimum observed RTT, 
-	s.currentRoundMinRTT = utils.MinDuration(s.currentRoundMinRTT, latestRTT)
-	s.rttSampleCount += 1
-
-	if (congestionWindow >= (hybridStartppLowWindow * maxSegmentSize) && s.rttSampleCount >= hybridStartppNRttSample) {
-		rttThresh := utils.MaxDuration(hybridStartppDelayMaxThresholdUs, utils.MinDuration(s.lastRoundMinRTT / 8, hybridStartppDelayMaxThresholdUs))
+	if s.currentRoundMinRTT == 0 || s.currentRoundMinRTT > latestRTT {
+		s.currentRoundMinRTT = latestRTT
+	}
+	s.rttSampleCount++
+	if (congestionWindow >= hybridStartppLowWindow  && s.rttSampleCount >= hybridStartppNRttSample) {
+		rttThresh := utils.MaxDuration(hybridStartppDelayMinThresholdUs, utils.MinDuration(s.lastRoundMinRTT >> 3, hybridStartppDelayMaxThresholdUs))//we divide minRTT by 8
 		if (s.currentRoundMinRTT >= (s.lastRoundMinRTT + rttThresh)){
 			s.inLSS = true
 			//ssthresh = cwnd
