@@ -163,10 +163,12 @@ func main() {
 	}
 
 	handler := setupHandler(*www)
+	log.Printf("access to files : %s\n", *www)
 	quicConf := &quic.Config{}
 	if *enableQlog {
+		nomQlog := fmt.Sprintf("%s_%s", *startAlgostr, *congestionAlgostr)
 		quicConf.Tracer = qlog.NewTracer(func(_ logging.Perspective, connID []byte) io.WriteCloser {
-			filename := fmt.Sprintf("server_%x.qlog", connID)
+			filename := fmt.Sprintf("server_%s_%x.qlog", nomQlog, connID)
 			f, err := os.Create(filename)
 			if err != nil {
 				log.Fatal(err)

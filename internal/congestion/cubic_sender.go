@@ -299,7 +299,6 @@ func (c *cubicSender) maybeIncreaseCwnd(
 		case utils.ChooseHystartpp:
 			c.congestionWindow = c.hybridSlowStartpp.UpdateCwndHystartppSlowStart(ackedBytes, c.congestionWindow, c.maxDatagramSize)		
 		}
-		fmt.Print("Maj cwnd",c.congestionWindow)
 	
 	} else if c.InLowSlowStart() {
 		//RFC recommends to compare hystartpp Cwnd to Congestion Avoidance algorithm computed Cwnd
